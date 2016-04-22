@@ -16,6 +16,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
+using Velleman8090;
 
 namespace WebcamPhotosensor
 {
@@ -28,9 +29,20 @@ namespace WebcamPhotosensor
         {
             InitializeComponent();
             //this.Loaded += MainWindow_Loaded;
+            this._relay = V8090.Instance;
+            this._relay.TranmissionFailed += TransmissionFailed;
+        }
+
+        private void TransmissionFailed()
+        {
+            this.failedCount.Text = (int.Parse(this.failedCount.Text) + 1).ToString();
         }
 
         private VideoCaptureDevice _vs;
+
+        private V8090 _relay;
+
+        bool _isOn = false;
 
         private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
@@ -46,16 +58,31 @@ namespace WebcamPhotosensor
             this._vs = videoSource;
             // start the video source
             videoSource.Start();
+            this.Dispatcher.Invoke(() => onetime.IsEnabled = false);
+            
         }
 
-        private void video_NewFrame(object sender,
+        private async void video_NewFrame(object sender,
         NewFrameEventArgs eventArgs)
         {
             this._vs.SignalToStop();
             // get new frame
             Bitmap bitmap = eventArgs.Frame;
             //bitmap.Save("test.jpg", ImageFormat.Jpeg);
-            MessageBox.Show(CalculateAverageLightness(bitmap).ToString());
+
+            if (CalculateAverageLightness(bitmap) < (upDown.Value * 0.01) && !this._isOn)
+            {
+                this._relay.On(6);
+                this._isOn = true;
+            }
+            else if (CalculateAverageLightness(bitmap) > (upDown.Value * 0.01) && this._isOn)
+            {
+                this._relay.Off(6);
+                this._isOn = false;
+            }
+
+            await Task.Delay(2000);
+            MainWindow_Loaded(this, null);
             // process the frame
         }
 
