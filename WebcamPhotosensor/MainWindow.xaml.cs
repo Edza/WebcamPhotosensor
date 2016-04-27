@@ -1,5 +1,6 @@
 ﻿using AForge.Video;
 using AForge.Video.DirectShow;
+using Hardcodet.Wpf.TaskbarNotification;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -20,22 +21,82 @@ using Velleman8090;
 
 namespace WebcamPhotosensor
 {
+    
+
     /// <summary>
     /// Interaction logic for MainWindow.xaml
     /// </summary>
     public partial class MainWindow : Window
     {
+        public class Clicker : ICommand
+        {
+            private Action _todo;
+
+            public event EventHandler CanExecuteChanged;
+
+            public Clicker(Action todo)
+            {
+                this._todo = todo;
+            }
+
+            public bool CanExecute(object parameter)
+            {
+                // tīšami tukšs
+                return true;
+            }
+
+            public void Execute(object parameter)
+            {
+                this._todo();
+            }
+        }
+
         public MainWindow()
         {
             InitializeComponent();
             //this.Loaded += MainWindow_Loaded;
             this._relay = V8090.Instance;
             this._relay.TranmissionFailed += TransmissionFailed;
+
+            //Note: XAML is suggested for all but the simplest scenarios
+            TaskbarIcon tbi = new TaskbarIcon();
+            tbi.Icon = Properties.Resources.AppIcon;
+
+            tbi.ToolTipText = "Gaismas slēdzis";
+
+            tbi.DoubleClickCommand = new Clicker(() => {
+                if (this.IsVisible)
+                    this.Hide();
+                else
+                    this.Show();
+            });
+
+            this.Hide();
         }
+
+
+        bool _ignoreRequest = false;
 
         private void TransmissionFailed()
         {
-            this.failedCount.Text = (int.Parse(this.failedCount.Text) + 1).ToString();
+            var failedCount = this.Dispatcher.Invoke(() =>
+            {
+                var a = int.Parse(this.failedCount.Text) + 1;
+                this.failedCount.Text = a.ToString();
+                return a;
+            }
+            );
+
+            if (failedCount > 10)
+            {
+                this._ignoreRequest = true;
+                var res = MessageBox.Show("WOOPSIES, daudz failu! Kautkas ir ļoti nomiris! Vai visu nogalināt?", "EIULOĢIJA", MessageBoxButton.YesNo);
+                if (res == MessageBoxResult.Yes)
+                {
+                    Environment.FailFast(":(");
+                }
+                this._ignoreRequest = false;
+            }
         }
 
         private VideoCaptureDevice _vs;
@@ -59,7 +120,7 @@ namespace WebcamPhotosensor
             // start the video source
             videoSource.Start();
             this.Dispatcher.Invoke(() => onetime.IsEnabled = false);
-            
+
         }
 
         private async void video_NewFrame(object sender,
@@ -70,15 +131,24 @@ namespace WebcamPhotosensor
             Bitmap bitmap = eventArgs.Frame;
             //bitmap.Save("test.jpg", ImageFormat.Jpeg);
 
-            if (CalculateAverageLightness(bitmap) < (upDown.Value * 0.01) && !this._isOn)
+            var val = this.Dispatcher.Invoke(() => upDown.Value);
+
+            var lastBrightnesss = CalculateAverageLightness(bitmap);
+
+            this.Dispatcher.Invoke(() => last.Text = lastBrightnesss.ToString("F3"));
+
+            if (!this._ignoreRequest)
             {
-                this._relay.On(6);
-                this._isOn = true;
-            }
-            else if (CalculateAverageLightness(bitmap) > (upDown.Value * 0.01) && this._isOn)
-            {
-                this._relay.Off(6);
-                this._isOn = false;
+                if (lastBrightnesss < (val * 0.01) && !this._isOn)
+                {
+                    this._relay.On(6);
+                    this._isOn = true;
+                }
+                else if (lastBrightnesss > (val * 0.01) && this._isOn)
+                {
+                    this._relay.Off(6);
+                    this._isOn = false;
+                }
             }
 
             await Task.Delay(2000);
